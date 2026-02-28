@@ -1,0 +1,227 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// USER & AUTHENTICATION
+// ============================================================================
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  name            String
+  googleId        String?   @unique @map("google_id")
+  avatar          String?
+  defaultCurrency String    @default("USD") @map("default_currency") @db.VarChar(3)
+  locale          String    @default("en") @db.VarChar(5)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  sessions            Session[]
+  groupMembers        GroupMember[]
+  expensesPaid        Expense[]        @relation("ExpensePayer")
+  expenseShares       ExpenseShare[]
+  settlementsPaid     Settlement[]     @relation("SettlementPayer")
+  settlementsReceived Settlement[]     @relation("SettlementReceiver")
+
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at") @db.Timestamptz
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ============================================================================
+// GROUPS & MEMBERSHIP
+// ============================================================================
+
+model Group {
+  id                 String    @id @default(cuid())
+  name               String    @db.VarChar(100)
+  description        String?   @db.VarChar(500)
+  defaultCurrency    String    @default("USD") @map("default_currency") @db.VarChar(3)
+  settlementCurrency String?   @map("settlement_currency") @db.VarChar(3)
+  imageUrl           String?   @map("image_url")
+  inviteCode         String    @unique @map("invite_code") @db.VarChar(12)
+  isArchived         Boolean   @default(false) @map("is_archived")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  members     GroupMember[]
+  expenses    Expense[]
+  categories  Category[]
+  settlements Settlement[]
+
+  @@index([inviteCode])
+  @@index([isArchived])
+  @@map("groups")
+}
+
+enum GroupRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model GroupMember {
+  id       String    @id @default(cuid())
+  groupId  String    @map("group_id")
+  userId   String    @map("user_id")
+  nickname String?   @db.VarChar(50)
+  role     GroupRole @default(MEMBER)
+  joinedAt DateTime  @default(now()) @map("joined_at") @db.Timestamptz
+  leftAt   DateTime? @map("left_at") @db.Timestamptz
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+  @@map("group_members")
+}
+
+// ============================================================================
+// CATEGORIES
+// ============================================================================
+
+model Category {
+  id        String   @id @default(cuid())
+  groupId   String?  @map("group_id")
+  name      String   @db.VarChar(50)
+  icon      String   @default("receipt") @db.VarChar(30)
+  color     String   @default("#6366F1") @db.VarChar(7)
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  group    Group?    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+
+  @@index([groupId])
+  @@index([isDefault])
+  @@map("categories")
+}
+
+// ============================================================================
+// EXPENSES
+// ============================================================================
+
+enum SplitType {
+  EQUAL
+  UNEQUAL
+  PERCENTAGE
+}
+
+model Expense {
+  id          String    @id @default(cuid())
+  groupId     String    @map("group_id")
+  payerId     String    @map("payer_id")
+  categoryId  String?   @map("category_id")
+  description String    @db.VarChar(255)
+  amount      Decimal   @db.Decimal(12, 2)
+  currency    String    @db.VarChar(3)
+  splitType   SplitType @default(EQUAL) @map("split_type")
+  expenseDate DateTime  @default(now()) @map("expense_date") @db.Date
+  receiptUrl  String?   @map("receipt_url")
+  notes       String?   @db.Text
+  isDeleted   Boolean   @default(false) @map("is_deleted")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Recurring expense fields (V2)
+  isRecurring       Boolean   @default(false) @map("is_recurring")
+  recurringInterval String?   @map("recurring_interval") @db.VarChar(20)
+  recurringEndDate  DateTime? @map("recurring_end_date") @db.Date
+  parentExpenseId   String?   @map("parent_expense_id")
+
+  group         Group          @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  payer         User           @relation("ExpensePayer", fields: [payerId], references: [id])
+  category      Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  parentExpense Expense?       @relation("RecurringExpenses", fields: [parentExpenseId], references: [id], onDelete: SetNull)
+  childExpenses Expense[]      @relation("RecurringExpenses")
+  shares        ExpenseShare[]
+
+  @@index([groupId])
+  @@index([groupId, expenseDate(sort: Desc)])
+  @@index([groupId, isDeleted])
+  @@index([payerId])
+  @@index([categoryId])
+  @@index([isRecurring])
+  @@map("expenses")
+}
+
+model ExpenseShare {
+  id         String   @id @default(cuid())
+  expenseId  String   @map("expense_id")
+  userId     String   @map("user_id")
+  amount     Decimal  @db.Decimal(12, 2)
+  percentage Decimal? @db.Decimal(5, 2)
+  isPaid     Boolean  @default(false) @map("is_paid")
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([expenseId, userId])
+  @@index([expenseId])
+  @@index([userId])
+  @@index([userId, isPaid])
+  @@map("expense_shares")
+}
+
+// ============================================================================
+// SETTLEMENTS
+// ============================================================================
+
+model Settlement {
+  id         String   @id @default(cuid())
+  groupId    String   @map("group_id")
+  payerId    String   @map("payer_id")
+  receiverId String   @map("receiver_id")
+  amount     Decimal  @db.Decimal(12, 2)
+  currency   String   @db.VarChar(3)
+  settledAt  DateTime @default(now()) @map("settled_at") @db.Timestamptz
+  note       String?  @db.VarChar(255)
+
+  group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  payer    User  @relation("SettlementPayer", fields: [payerId], references: [id])
+  receiver User  @relation("SettlementReceiver", fields: [receiverId], references: [id])
+
+  @@index([groupId])
+  @@index([groupId, settledAt(sort: Desc)])
+  @@index([payerId])
+  @@index([receiverId])
+  @@map("settlements")
+}
+
+// ============================================================================
+// CURRENCY EXCHANGE RATES (CACHED)
+// ============================================================================
+
+model ExchangeRate {
+  id             String   @id @default(cuid())
+  baseCurrency   String   @map("base_currency") @db.VarChar(3)
+  targetCurrency String   @map("target_currency") @db.VarChar(3)
+  rate           Decimal  @db.Decimal(18, 8)
+  fetchedAt      DateTime @default(now()) @map("fetched_at") @db.Timestamptz
+
+  @@unique([baseCurrency, targetCurrency])
+  @@index([fetchedAt])
+  @@map("exchange_rates")
+}
