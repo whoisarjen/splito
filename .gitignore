@@ -23,6 +23,6 @@ logs
 .env.*
 !.env.example
 
-/generated/prisma
+# Prisma generates to node_modules/@prisma/client by default
 .vercel
 .env*.local
