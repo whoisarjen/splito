@@ -30,5 +30,8 @@
     "vue": "^3.5.28",
     "vue-router": "^4.6.4",
     "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "dotenv": "^17.3.1"
   }
 }
